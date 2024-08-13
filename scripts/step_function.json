@@ -1,0 +1,170 @@
+{
+  "Comment": "Step Function to create an EMR cluster, add steps to it, terminate the cluster, check and create Glue database, and run a Glue Crawler twice",
+  "StartAt": "Criando-EMR",
+  "States": {
+    "Criando-EMR": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::elasticmapreduce:createCluster.sync",
+      "Parameters": {
+        "Name": "desafio-step-function-emr",
+        "VisibleToAllUsers": true,
+        "ReleaseLabel": "emr-7.2.0",
+        "Applications": [
+          {
+            "Name": "Spark"
+          }
+        ],
+        "Configurations": [
+          {
+            "Classification": "spark-defaults",
+            "Properties": {
+              "spark.executor.cores": "3",
+              "spark.executor.memory": "13G",
+              "spark.executor.memoryOverhead": "1331MB",
+              "spark.driver.memory": "13G",
+              "spark.driver.cores": "3",
+              "spark.executor.instances": "1"
+            }
+          }
+        ],
+        "BootstrapActions": [
+          {
+            "Name": "Bootstrap",
+            "ScriptBootstrapAction": {
+              "Args": [],
+              "Path": "s3://main-scripts/desafio/bootstrap/bootstrap.sh"
+            }
+          }
+        ],
+        "ServiceRole": "EMR_DefaultRole",
+        "JobFlowRole": "EMR_EC2_DefaultRole",
+        "LogUri": "s3://main-scripts/desafio/log/",
+        "Instances": {
+          "Ec2SubnetId": "subnet-043e3dc5737040019",
+          "EmrManagedSlaveSecurityGroup": "sg-02d5df0dad14c5a61",
+          "EmrManagedMasterSecurityGroup": "sg-0f1f0aa7b4829fcbd",
+          "KeepJobFlowAliveWhenNoSteps": true,
+          "InstanceFleets": [
+            {
+              "Name": "MasterFleet",
+              "InstanceFleetType": "MASTER",
+              "TargetOnDemandCapacity": 1,
+              "InstanceTypeConfigs": [
+                {
+                  "InstanceType": "m5.xlarge"
+                }
+              ]
+            },
+            {
+              "Name": "CoreFleet",
+              "InstanceFleetType": "CORE",
+              "TargetOnDemandCapacity": 1,
+              "InstanceTypeConfigs": [
+                {
+                  "InstanceType": "m5.xlarge"
+                }
+              ]
+            }
+          ]
+        },
+        "Tags": [
+          {
+            "Key": "Name",
+            "Value": "desafio-step-function-emr"
+          },
+          {
+            "Key": "projeto",
+            "Value": "desafio"
+          }
+        ]
+      },
+      "ResultPath": "$.cluster",
+      "Next": "Ingestao-Dados-Desafio"
+    },
+    "Ingestao-Dados-Desafio": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::elasticmapreduce:addStep.sync",
+      "Parameters": {
+        "ClusterId.$": "$.cluster.ClusterId",
+        "Step": {
+          "Name": "Execução do script script.py",
+          "ActionOnFailure": "TERMINATE_CLUSTER",
+          "HadoopJarStep": {
+            "Jar": "command-runner.jar",
+            "Args": [
+              "spark-submit",
+              "--master",
+              "yarn",
+              "--deploy-mode",
+              "cluster",
+              "--conf",
+              "spark.network.timeout=10000001",
+              "--conf",
+              "spark.executor.heartbeatInterval=10000000",
+              "--py-files",
+              "s3://main-scripts/desafio/scripts/functions.py",
+              "s3://main-scripts/desafio/scripts/main.py"
+            ]
+          }
+        }
+      },
+      "ResultPath": "$.primeiroStep",
+      "Next": "Encerrando-EMR"
+    },
+    "Encerrando-EMR": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::elasticmapreduce:terminateCluster.sync",
+      "Parameters": {
+        "ClusterId.$": "$.cluster.ClusterId"
+      },
+      "Next": "GetDatabase"
+    },
+    "GetDatabase": {
+      "Type": "Task",
+      "Parameters": {
+        "Name": "desafio"
+      },
+      "Resource": "arn:aws:states:::aws-sdk:glue:getDatabase",
+      "Next": "Condicional-Criar-Database"
+    },
+    "Condicional-Criar-Database": {
+      "Type": "Choice",
+      "Choices": [
+        {
+          "Variable": "$.databaseCheck",
+          "IsPresent": true,
+          "Next": "StartCrawler"
+        }
+      ],
+      "Default": "CreateDatabase"
+    },
+    "CreateDatabase": {
+      "Type": "Task",
+      "Parameters": {
+        "DatabaseInput": {
+          "Name": "desafio"
+        }
+      },
+      "Resource": "arn:aws:states:::aws-sdk:glue:createDatabase",
+      "Next": "CreateCrawler"
+    },
+    "CreateCrawler": {
+      "Type": "Task",
+      "Parameters": {
+        "Name": "desafio_gold",
+        "Role": "arn:aws:iam::685133089880:role/AWS_Glue",
+        "Targets": {}
+      },
+      "Resource": "arn:aws:states:::aws-sdk:glue:createCrawler",
+      "End": true
+    },
+    "StartCrawler": {
+      "Type": "Task",
+      "Parameters": {
+        "Name": "desafio_gold"
+      },
+      "Resource": "arn:aws:states:::aws-sdk:glue:startCrawler",
+      "End": true
+    }
+  }
+}

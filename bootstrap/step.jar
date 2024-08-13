@@ -1,0 +1,6 @@
+spark-submit --master yarn \
+--deploy-mode cluster \
+--conf spark.network.timeout=10000001 \
+--conf spark.executor.heartbeatInterval=10000000 \
+--py-files s3://main-scripts/desafio/scripts/functions.py \
+s3://main-scripts/desafio/scripts/main.py
